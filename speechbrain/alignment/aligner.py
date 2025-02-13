@@ -5,11 +5,16 @@ Authors
  * Elena Rastorgueva 2020
  * Loren Lugosch 2020
 """
-import torch
+
 import random
-from speechbrain.utils.checkpoints import register_checkpoint_hooks
-from speechbrain.utils.checkpoints import mark_as_saver
-from speechbrain.utils.checkpoints import mark_as_loader
+
+import torch
+
+from speechbrain.utils.checkpoints import (
+    mark_as_loader,
+    mark_as_saver,
+    register_checkpoint_hooks,
+)
 from speechbrain.utils.data_utils import undo_padding
 
 
@@ -96,7 +101,7 @@ class HMMAligner(torch.nn.Module):
         self.lexicon_path = lexicon_path
 
         if self.lexicon_path is not None:
-            with open(self.lexicon_path, "r") as f:
+            with open(self.lexicon_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
 
             for i, line in enumerate(lines):
@@ -291,9 +296,7 @@ class HMMAligner(torch.nn.Module):
 
         return poss_phns, log_transition_matrix, start_states, final_states
 
-    def use_lexicon(
-        self, words, interword_sils=True, sample_pron=False,
-    ):
+    def use_lexicon(self, words, interword_sils=True, sample_pron=False):
         """Do processing using the lexicon to return a sequence of the possible
         phonemes, the transition/pi probabilities, and the possible final
         states.
@@ -695,6 +698,8 @@ class HMMAligner(torch.nn.Module):
             The absolute length of each phoneme sequence in the batch.
         phns : torch.Tensor (batch, phoneme in phn sequence)
             The phonemes that are known/thought to be in each utterance.
+        final_states : list
+            List of final states
 
         Returns
         -------
@@ -1042,7 +1047,9 @@ class HMMAligner(torch.nn.Module):
         batch_size = len(lens_abs)
         fb_max_length = torch.max(lens_abs)
 
-        flat_start_batch = torch.zeros(batch_size, fb_max_length).long()
+        flat_start_batch = torch.zeros(
+            batch_size, fb_max_length, device=phns.device
+        ).long()
         for i in range(batch_size):
             utter_phns = phns[i]
             utter_phns = utter_phns[: phn_lens_abs[i]]  # crop out zero padding
@@ -1091,7 +1098,9 @@ class HMMAligner(torch.nn.Module):
         batch_size = len(lens_abs)
         fb_max_length = torch.max(lens_abs)
 
-        viterbi_batch = torch.zeros(batch_size, fb_max_length).long()
+        viterbi_batch = torch.zeros(
+            batch_size, fb_max_length, device=lens_abs.device
+        ).long()
         for i in range(batch_size):
             viterbi_preds = self.align_dict[ids[i]]
             viterbi_preds = torch.nn.functional.pad(
@@ -1313,9 +1322,8 @@ class HMMAligner(torch.nn.Module):
         torch.save(self.align_dict, path)
 
     @mark_as_loader
-    def _load(self, path, end_of_epoch=False, device=None):
+    def _load(self, path, end_of_epoch=False):
         del end_of_epoch  # Not used here.
-        del device
         self.align_dict = torch.load(path)
 
 
@@ -1405,7 +1413,7 @@ def batch_log_matvecmul(A, b):
     b : torch.Tensor (batch, dim1)
         Tensor.
 
-    Outputs
+    Returns
     -------
     x : torch.Tensor (batch, dim1)
 
@@ -1443,7 +1451,7 @@ def batch_log_maxvecmul(A, b):
     b : torch.Tensor (batch, dim1)
         Tensor
 
-    Outputs
+    Returns
     -------
     x : torch.Tensor (batch, dim1)
         Tensor.

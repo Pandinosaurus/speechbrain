@@ -1,9 +1,13 @@
 # Speaker Diarization on AMI corpus
 This directory contains the scripts for speaker diarization on the AMI corpus (http://groups.inf.ed.ac.uk/ami/corpus/).
 
-## Extra requirements
-The code requires sklearn as an additional dependency. 
-To install it, type: `pip install sklearn`
+## Installing Extra Dependencies
+
+Before proceeding, ensure you have installed the necessary additional dependencies. To do this, simply run the following command in your terminal:
+
+```
+pip install -r extra_requirements.txt
+```
 
 ## How to run
 Use the following command to run diarization on AMI corpus.
@@ -11,7 +15,7 @@ Use the following command to run diarization on AMI corpus.
 
 
 ## Speaker Diarization using Deep Embedding and Spectral Clustering
-The script assumes the pre-trained model. Please refer to speechbrain/recipes/VoxCeleb/SpeakerRec/README.md to know more about the available pre-trained models that can easily be downloaded. You can also train the speaker embedding model from scratch using instructions in the same file. 
+The script assumes the pre-trained model. Please refer to speechbrain/recipes/VoxCeleb/SpeakerRec/README.md to know more about the available pre-trained models that can easily be downloaded. You can also train the speaker embedding model from scratch using instructions in the same file.
 
 
 ## Best performance in terms of Diarization Error Rate (DER).

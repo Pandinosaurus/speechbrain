@@ -4,23 +4,27 @@ Authors
  * Hwidong Na 2020
 """
 
-# import os
 import torch  # noqa: F401
 import torch.nn as nn
 import torch.nn.functional as F
+
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.nnet.CNN import Conv1d as _Conv1d
-from speechbrain.nnet.normalization import BatchNorm1d as _BatchNorm1d
 from speechbrain.nnet.linear import Linear
+from speechbrain.nnet.normalization import BatchNorm1d as _BatchNorm1d
 
 
 # Skip transpose as much as possible for efficiency
 class Conv1d(_Conv1d):
+    """1D convolution. Skip transpose is used to improve efficiency."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(skip_transpose=True, *args, **kwargs)
 
 
 class BatchNorm1d(_BatchNorm1d):
+    """1D batch normalization. Skip transpose is used to improve efficiency."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(skip_transpose=True, *args, **kwargs)
 
@@ -29,7 +33,7 @@ class TDNNBlock(nn.Module):
     """An implementation of TDNN.
 
     Arguments
-    ----------
+    ---------
     in_channels : int
         Number of input channels.
     out_channels : int
@@ -37,9 +41,13 @@ class TDNNBlock(nn.Module):
     kernel_size : int
         The kernel size of the TDNN blocks.
     dilation : int
-        The dilation of the Res2Net block.
+        The dilation of the TDNN block.
     activation : torch class
         A class for constructing the activation layers.
+    groups : int
+        The groups size of the TDNN blocks.
+    dropout : float
+        Rate of channel dropout during training.
 
     Example
     -------
@@ -57,19 +65,24 @@ class TDNNBlock(nn.Module):
         kernel_size,
         dilation,
         activation=nn.ReLU,
+        groups=1,
+        dropout=0.0,
     ):
-        super(TDNNBlock, self).__init__()
+        super().__init__()
         self.conv = Conv1d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
             dilation=dilation,
+            groups=groups,
         )
         self.activation = activation()
         self.norm = BatchNorm1d(input_size=out_channels)
+        self.dropout = nn.Dropout1d(p=dropout)
 
     def forward(self, x):
-        return self.norm(self.activation(self.conv(x)))
+        """Processes the input tensor x and returns an output tensor."""
+        return self.dropout(self.norm(self.activation(self.conv(x))))
 
 
 class Res2NetBlock(torch.nn.Module):
@@ -87,6 +100,8 @@ class Res2NetBlock(torch.nn.Module):
         The kernel size of the Res2Net block.
     dilation : int
         The dilation of the Res2Net block.
+    dropout : float
+        Rate of channel dropout during training.
 
     Example
     -------
@@ -98,9 +113,15 @@ class Res2NetBlock(torch.nn.Module):
     """
 
     def __init__(
-        self, in_channels, out_channels, scale=8, kernel_size=3, dilation=1
+        self,
+        in_channels,
+        out_channels,
+        scale=8,
+        kernel_size=3,
+        dilation=1,
+        dropout=0.0,
     ):
-        super(Res2NetBlock, self).__init__()
+        super().__init__()
         assert in_channels % scale == 0
         assert out_channels % scale == 0
 
@@ -114,6 +135,7 @@ class Res2NetBlock(torch.nn.Module):
                     hidden_channel,
                     kernel_size=kernel_size,
                     dilation=dilation,
+                    dropout=dropout,
                 )
                 for i in range(scale - 1)
             ]
@@ -121,6 +143,7 @@ class Res2NetBlock(torch.nn.Module):
         self.scale = scale
 
     def forward(self, x):
+        """Processes the input tensor x and returns an output tensor."""
         y = []
         for i, x_i in enumerate(torch.chunk(x, self.scale, dim=1)):
             if i == 0:
@@ -157,7 +180,7 @@ class SEBlock(nn.Module):
     """
 
     def __init__(self, in_channels, se_channels, out_channels):
-        super(SEBlock, self).__init__()
+        super().__init__()
 
         self.conv1 = Conv1d(
             in_channels=in_channels, out_channels=se_channels, kernel_size=1
@@ -169,6 +192,7 @@ class SEBlock(nn.Module):
         self.sigmoid = torch.nn.Sigmoid()
 
     def forward(self, x, lengths=None):
+        """Processes the input tensor x and returns an output tensor."""
         L = x.shape[-1]
         if lengths is not None:
             mask = length_to_mask(lengths * L, max_len=L, device=x.device)
@@ -194,6 +218,8 @@ class AttentiveStatisticsPooling(nn.Module):
         The number of input channels.
     attention_channels: int
         The number of attention channels.
+    global_context: bool
+        Whether to use global context.
 
     Example
     -------
@@ -226,6 +252,13 @@ class AttentiveStatisticsPooling(nn.Module):
         ---------
         x : torch.Tensor
             Tensor of shape [N, C, L].
+        lengths : torch.Tensor
+            The corresponding relative lengths of the inputs.
+
+        Returns
+        -------
+        pooled_stats : torch.Tensor
+            mean and std of batch
         """
         L = x.shape[-1]
 
@@ -276,17 +309,25 @@ class SERes2NetBlock(nn.Module):
     TDNN-Res2Net-TDNN-SEBlock.
 
     Arguments
-    ----------
+    ---------
+    in_channels: int
+        Expected size of input channels.
     out_channels: int
         The number of output channels.
     res2net_scale: int
         The scale of the Res2Net block.
+    se_channels : int
+        The number of output channels after squeeze.
     kernel_size: int
         The kernel size of the TDNN blocks.
     dilation: int
         The dilation of the Res2Net block.
     activation : torch class
         A class for constructing the activation layers.
+    groups: int
+        Number of blocked connections from input channels to output channels.
+    dropout: float
+        Rate of channel dropout during training.
 
     Example
     -------
@@ -306,6 +347,8 @@ class SERes2NetBlock(nn.Module):
         kernel_size=1,
         dilation=1,
         activation=torch.nn.ReLU,
+        groups=1,
+        dropout=0.0,
     ):
         super().__init__()
         self.out_channels = out_channels
@@ -315,6 +358,8 @@ class SERes2NetBlock(nn.Module):
             kernel_size=1,
             dilation=1,
             activation=activation,
+            groups=groups,
+            dropout=dropout,
         )
         self.res2net_block = Res2NetBlock(
             out_channels, out_channels, res2net_scale, kernel_size, dilation
@@ -325,6 +370,8 @@ class SERes2NetBlock(nn.Module):
             kernel_size=1,
             dilation=1,
             activation=activation,
+            groups=groups,
+            dropout=dropout,
         )
         self.se_block = SEBlock(out_channels, se_channels, out_channels)
 
@@ -337,6 +384,7 @@ class SERes2NetBlock(nn.Module):
             )
 
     def forward(self, x, lengths=None):
+        """Processes the input tensor x and returns an output tensor."""
         residual = x
         if self.shortcut:
             residual = self.shortcut(x)
@@ -356,8 +404,12 @@ class ECAPA_TDNN(torch.nn.Module):
 
     Arguments
     ---------
+    input_size : int
+        Expected size of the input dimension.
     device : str
         Device used, e.g., "cpu" or "cuda".
+    lin_neurons : int
+        Number of neurons in linear layers.
     activation : torch class
         A class for constructing the activation layers.
     channels : list of ints
@@ -366,8 +418,18 @@ class ECAPA_TDNN(torch.nn.Module):
         List of kernel sizes for each layer.
     dilations : list of ints
         List of dilations for kernels in each layer.
-    lin_neurons : int
-        Number of neurons in linear layers.
+    attention_channels: int
+        The number of attention channels.
+    res2net_scale : int
+        The scale of the Res2Net block.
+    se_channels : int
+        The number of output channels after squeeze.
+    global_context: bool
+        Whether to use global context.
+    groups : list of ints
+        List of groups for kernels in each layer.
+    dropout : float
+        Rate of channel dropout during training.
 
     Example
     -------
@@ -391,8 +453,9 @@ class ECAPA_TDNN(torch.nn.Module):
         res2net_scale=8,
         se_channels=128,
         global_context=True,
+        groups=[1, 1, 1, 1, 1],
+        dropout=0.0,
     ):
-
         super().__init__()
         assert len(channels) == len(kernel_sizes)
         assert len(channels) == len(dilations)
@@ -407,6 +470,8 @@ class ECAPA_TDNN(torch.nn.Module):
                 kernel_sizes[0],
                 dilations[0],
                 activation,
+                groups[0],
+                dropout,
             )
         )
 
@@ -421,16 +486,20 @@ class ECAPA_TDNN(torch.nn.Module):
                     kernel_size=kernel_sizes[i],
                     dilation=dilations[i],
                     activation=activation,
+                    groups=groups[i],
+                    dropout=dropout,
                 )
             )
 
         # Multi-layer feature aggregation
         self.mfa = TDNNBlock(
-            channels[-1],
+            channels[-2] * (len(channels) - 2),
             channels[-1],
             kernel_sizes[-1],
             dilations[-1],
             activation,
+            groups=groups[-1],
+            dropout=dropout,
         )
 
         # Attentive Statistical Pooling
@@ -455,6 +524,13 @@ class ECAPA_TDNN(torch.nn.Module):
         ---------
         x : torch.Tensor
             Tensor of shape (batch, time, channel).
+        lengths : torch.Tensor
+            Corresponding relative lengths of inputs.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Embedding vector.
         """
         # Minimize transpose for efficiency
         x = x.transpose(1, 2)
@@ -487,6 +563,8 @@ class Classifier(torch.nn.Module):
 
     Arguments
     ---------
+    input_size : int
+        Expected size of input dimension.
     device : str
         Device used, e.g., "cpu" or "cuda".
     lin_blocks : int
@@ -500,7 +578,7 @@ class Classifier(torch.nn.Module):
     -------
     >>> classify = Classifier(input_size=2, lin_neurons=2, out_neurons=2)
     >>> outputs = torch.tensor([ [1., -1.], [-9., 1.], [0.9, 0.1], [0.1, 0.9] ])
-    >>> outupts = outputs.unsqueeze(1)
+    >>> outputs = outputs.unsqueeze(1)
     >>> cos = classify(outputs)
     >>> (cos < -1.0).long().sum()
     tensor(0)
@@ -516,14 +594,13 @@ class Classifier(torch.nn.Module):
         lin_neurons=192,
         out_neurons=1211,
     ):
-
         super().__init__()
         self.blocks = nn.ModuleList()
 
         for block_index in range(lin_blocks):
             self.blocks.extend(
                 [
-                    _BatchNorm1d(input_size),
+                    _BatchNorm1d(input_size=input_size),
                     Linear(input_size=input_size, n_neurons=lin_neurons),
                 ]
             )
@@ -542,6 +619,11 @@ class Classifier(torch.nn.Module):
         ---------
         x : torch.Tensor
             Torch tensor.
+
+        Returns
+        -------
+        out : torch.Tensor
+            Output probabilities over speakers.
         """
         for layer in self.blocks:
             x = layer(x)
